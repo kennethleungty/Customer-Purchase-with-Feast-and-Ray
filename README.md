@@ -1,1 +1,244 @@
-# Retail-Customer-Churn-with-Feast
+# Retail Customer Churn Prediction with Feast
+
+End-to-end MLOps pipeline for predicting **30-day customer churn** using the
+[UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail),
+with [Feast](https://feast.dev/) as the feature store.
+
+## Overview
+
+- **Problem**: Predict whether a customer will churn (no purchases in the next 30 days)
+- **Approach**: Rolling 90-day feature windows with 30-day churn labels, generating
+  multiple snapshots per customer across ~9 cutoff dates spaced 30 days apart
+- **Features**: RFM + Behavioral signals, served via Feast offline store
+- **Model**: XGBoost binary classifier
+- **Feature Store**: Feast with PostgreSQL registry + parquet-backed offline store (2 feature views)
+- **Train/test split**: Temporal — train on earlier cutoffs, test on the latest cutoff
+
+## Data
+The UCI Online Retail dataset is available [here](https://archive.ics.uci.edu/dataset/352/online+retail).
+
+## Project Structure
+
+```
+├── data/
+│   └── Online Retail.xlsx              # Raw UCI dataset
+├── feature_store/
+│   ├── feature_store.yaml              # Feast configuration
+│   ├── definitions.py                  # Entity + FeatureView definitions
+│   └── data/                           # Generated parquets (Feast data sources)
+├── src/
+│   ├── config.py                       # Centralized configuration
+│   ├── data_prep/                      # Data preparation package
+│   │   ├── utils.py                    # Ingestion, cutoff generation, churn labels
+│   │   ├── rfm_features.py             # RFM feature engineering
+│   │   ├── behavior_features.py        # Behavioral feature engineering
+│   │   └── pipeline.py                 # Orchestrator (run via Makefile)
+│   ├── train.py                        # Feast retrieval → temporal split → XGBoost training
+│   └── predict.py                      # Batch prediction via Feast (latest cutoff)
+├── models/                             # Saved model + predictions
+├── docker-compose.yml                  # PostgreSQL for Feast registry
+├── Makefile                            # Pipeline orchestration
+└── requirements.txt
+```
+
+## Prerequisites
+
+- Python 3.10+
+- Docker (for the PostgreSQL registry)
+
+## Setup
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Place `Online Retail.xlsx` in the `data/` directory.
+
+## Usage
+
+Run the full pipeline:
+
+```bash
+make all        # db → prep → apply → train
+```
+
+Or run steps individually:
+
+```bash
+make db         # Start PostgreSQL via Docker (Feast registry backend)
+make prep       # Ingest Excel, engineer rolling features, save parquets
+make apply      # Register Feast feature definitions in PostgreSQL
+make train      # Train XGBoost using Feast offline store (temporal split)
+make predict    # Batch-score customers at the latest cutoff
+```
+
+To tear down the database:
+
+```bash
+make clean-db   # Stop PostgreSQL container and remove volume
+```
+
+## Rolling Window Design
+
+Features are computed from a **90-day window** before each cutoff date,
+and churn labels use the **30-day window** after it. Cutoff dates are
+spaced **30 days apart**, producing ~9 snapshots across the dataset.
+
+```
+For each cutoff C:
+  Features: transactions in [C - 90d, C)
+  Label:    churn = 1 if zero purchases in [C, C + 30d)
+```
+
+```mermaid
+gantt
+    title Rolling Window Timeline
+    dateFormat YYYY-MM-DD
+    axisFormat %b %Y
+
+    section Cutoff_1
+    Features_90d      :f1, 2010-12-01, 90d
+    Churn_30d         :c1, after f1, 30d
+
+    section Cutoff_2
+    Features_90d      :f2, 2010-12-31, 90d
+    Churn_30d         :c2, after f2, 30d
+
+    section Cutoff_3
+    Features_90d      :f3, 2011-01-30, 90d
+    Churn_30d         :c3, after f3, 30d
+
+    section ...more
+    Earlier_cutoffs_TRAIN :milestone, 2011-08-28, 0d
+
+    section Last_Cutoff
+    Features_90d      :f9, 2011-07-29, 90d
+    Churn_30d_TEST    :c9, after f9, 30d
+```
+
+The same customer appears at multiple cutoffs with different feature values
+and potentially different labels, yielding ~17,000 training rows (vs. ~3,700
+with a single cutoff).
+
+**Training vs. prediction**: The entity key is `(customer_id, event_timestamp)`.
+During **training**, the entity DataFrame spans all cutoff dates — Feast's
+point-in-time join pulls the correct 90-day feature snapshot for each.
+During **prediction**, the entity DataFrame contains only the latest cutoff,
+so Feast returns just that single snapshot per customer.
+
+## Feature Views
+
+**`customer_rfm_features`** — Classic customer-value signals (90-day window):
+- `recency_days` — days since last purchase in the window
+- `frequency` — number of distinct orders in the window
+- `monetary` — total spend in the window
+- `tenure_days` — days since first-ever purchase (all-time)
+
+**`customer_behavior_features`** — Purchasing pattern signals (90-day window):
+- `avg_order_value` — mean spend per order
+- `avg_basket_size` — mean items per order
+- `n_unique_products` — product diversity
+- `return_rate` — share of cancelled orders
+- `avg_days_between_purchases` — purchase cadence
+
+## Feature Store Concepts
+
+A Feast feature store has two core components:
+
+**Registry** — A metadata catalog that stores *what* features exist: entity
+definitions, feature view schemas, data source locations, and versioning.
+Think of it as the "table of contents" for the feature store. Without it,
+Feast wouldn't know which features are available or where to find their
+data. It is lightweight and write-heavy during development (every
+`feast apply` updates it).
+
+**Data sources** — The actual feature values. Each parquet file is a
+*data source* that backs a Feast `FeatureView`. When
+`get_historical_features()` is called, Feast reads from these data sources
+to construct the feature matrix. They are large and read-heavy during
+training and batch prediction.
+
+## Feature Store Infrastructure
+
+This project moves beyond a purely local setup to simulate production-grade
+feature store infrastructure using Docker.
+
+```mermaid
+flowchart LR
+    subgraph docker [Docker]
+        PG["PostgreSQL 16\nFeast Registry"]
+    end
+
+    subgraph disk [Local Disk / Mounted Volume]
+        PQ1["customer_rfm_features.parquet"]
+        PQ2["customer_behavior_features.parquet"]
+    end
+
+    subgraph feast [Feast]
+        REG["SQL Registry"]
+        OFF["FileOfflineStore"]
+    end
+
+    REG -->|SQLAlchemy| PG
+    OFF --> PQ1
+    OFF --> PQ2
+```
+
+**Registry (metadata)** — Stored in PostgreSQL via Docker, replacing the
+default local SQLite file. The registry holds feature view definitions,
+entity schemas, and data source locations. Using PostgreSQL means multiple
+data scientists and services can read from and write to the same registry
+concurrently — essential for team collaboration in production.
+
+**Offline store (feature values)** — Parquet files on local disk, simulating
+cloud object storage (S3/GCS). In production, these files would sit in a
+cloud bucket or be replaced by a data warehouse. The `FileOfflineStore`
+reads them directly for `get_historical_features()` calls during training
+and batch prediction.
+
+**Why this hybrid approach?** In real-world deployments, the registry and
+the feature data almost always live in separate systems. The registry is
+a lightweight metadata catalog (small, write-heavy during development),
+while the offline store holds large volumes of feature data (read-heavy
+during training). Separating them allows each to scale independently.
+
+### Production next steps
+
+This local Docker setup is designed to be swapped for cloud infrastructure
+with minimal code changes — only `feature_store.yaml` and the data source
+definitions in `definitions.py` need to be updated:
+
+- **Registry**: Replace the local PostgreSQL connection string with a
+  managed database (e.g., Cloud SQL, Amazon RDS) or use an S3/GCS path
+  for a file-based registry in the cloud
+- **Offline store**: Swap `type: file` for `type: bigquery`, `type: snowflake`,
+  or `type: redshift` depending on your data warehouse. Replace `FileSource`
+  with `BigQuerySource` / `SnowflakeSource` in `definitions.py`
+- **Online store** (if real-time serving is needed): Add Redis or DynamoDB
+  via `online_store` config. Populate with `feast materialize`
+- **CI/CD**: Run `feast apply` in a CI pipeline so that feature definitions
+  are version-controlled and reviewed before being registered
+
+The application code (`train.py`, `predict.py`) remains unchanged across
+all of these — Feast abstracts the infrastructure behind a consistent
+Python API.
+
+## Model Serialization
+
+The trained XGBoost model is saved as `models/xgb_churn_model.json` using
+XGBoost's native JSON format. JSON is preferred over pickle because it is
+**human-readable** (you can inspect the tree structure directly),
+**version-safe** (no Python-version or XGBoost-version deserialization
+issues), and **secure** (pickle can execute arbitrary code on load).
+
+## Pipeline Flow
+
+```
+Online Retail.xlsx
+  → data_prep/      → rolling cutoffs → 2 multi-snapshot parquets
+  → feast apply     → Feast registry
+  → train.py        → Feast point-in-time join → temporal split → XGBoost → model (.json)
+  → predict.py      → Feast retrieval (latest cutoff) → batch predictions
+```
