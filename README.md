@@ -1,6 +1,6 @@
-# Customer Purchase Modeling (MLOps) with Feast and Ray
+# Production Feature Engineering Pipelines with Feast and Ray
 
-End-to-end MLOps pipeline for predicting **30-day customer purchase propensity** using the
+ML pipeline for predicting **30-day customer purchase propensity** using the
 [UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail),
 with [Feast](https://feast.dev/) as the feature store and [Ray](https://www.ray.io/) for parallel feature engineering.
 
@@ -220,7 +220,7 @@ joins across multiple workers. The underlying parquet files are unchanged;
 only the compute engine is different.
 
 **Why this matters**: when `get_historical_features()` is called, Feast
-performs a point-in-time join for each feature view, matching every
+performs a point-in-time join (i.e., data from specific timepoint) for each feature view, matching every
 `(customer_id, event_timestamp)` row in the entity DataFrame to the
 correct feature snapshot where the feature timestamp is <= the entity
 timestamp. With 2 feature views, that's 2 temporal joins. As entity
