@@ -1,9 +1,11 @@
 """
 Data preparation pipeline orchestrator.
-Loops over rolling cutoff dates, engineers features at each, and saves parquets.
+Uses Ray to parallelize feature engineering across rolling cutoff dates.
+Each cutoff is an independent task, so Ray distributes them across available CPUs.
 """
 
 import pandas as pd
+import ray
 
 from src.config import (
     BEHAVIOR_FEATURES_PATH,
@@ -19,8 +21,34 @@ from src.data_prep.rfm_features import build_rfm_features
 from src.data_prep.utils import generate_cutoff_dates, ingest_and_clean
 
 
-def main():
+@ray.remote
+def compute_features_for_cutoff(
+    df: pd.DataFrame, cutoff: pd.Timestamp, feature_window: int
+) -> dict:
+    """
+    Ray remote task: compute RFM and behavioral features for a single cutoff.
+    Runs in a separate worker process, enabling parallel execution across cutoffs.
+    Returns a dict with the two DataFrames so Ray can serialize them back.
+    """
+    rfm = build_rfm_features(df, cutoff, feature_window)
+    behavior = build_behavior_features(df, cutoff, feature_window)
+
+    # Tag with event_timestamp so Feast can do point-in-time joins
+    rfm["event_timestamp"] = cutoff
+    behavior["event_timestamp"] = cutoff
+
+    rfm = rfm.rename(columns={"CustomerID": "customer_id"})
+    behavior = behavior.rename(columns={"CustomerID": "customer_id"})
+
+    return {"cutoff": cutoff, "rfm": rfm, "behavior": behavior}
+
+
+def run_data_prep_pipeline():
     print("=== Data Preparation Pipeline ===\n")
+
+    # Initialize Ray (uses all available CPUs by default)
+    ray.init(ignore_reinit_error=True, log_to_driver=False)
+    print(f"      Ray initialized — {ray.cluster_resources().get('CPU', 0):.0f} CPUs available\n")
 
     # 1. Ingest and clean
     print("[1/3] Loading raw data...")
@@ -35,28 +63,30 @@ def main():
     for c in cutoffs:
         print(f"      {c.date()}")
 
-    # 3. At each cutoff, compute features from the 90-day window before it.
-    #    Each customer can appear at multiple cutoffs (if they were active
-    #    in that window), giving us many more training samples.
+    # 3. Fan out feature engineering across Ray workers.
+    #    ray.put() places the DataFrame in shared object store once,
+    #    avoiding redundant copies to each worker.
     print(f"\n[3/3] Engineering features at each cutoff (window={FEATURE_WINDOW_DAYS}d)...")
+    df_ref = ray.put(df)
+
+    # Launch all cutoffs in parallel as Ray tasks
+    futures = [
+        compute_features_for_cutoff.remote(df_ref, cutoff, FEATURE_WINDOW_DAYS)
+        for cutoff in cutoffs
+    ]
+
+    # Collect results as they complete
+    results = ray.get(futures)
+
+    # Sort by cutoff date for deterministic output order
+    results.sort(key=lambda r: r["cutoff"])
+
     all_rfm = []
     all_behavior = []
-
-    for cutoff in cutoffs:
-        rfm = build_rfm_features(df, cutoff, FEATURE_WINDOW_DAYS)
-        behavior = build_behavior_features(df, cutoff, FEATURE_WINDOW_DAYS)
-
-        # Tag with event_timestamp so Feast can do point-in-time joins
-        rfm["event_timestamp"] = cutoff
-        behavior["event_timestamp"] = cutoff
-
-        rfm = rfm.rename(columns={"CustomerID": "customer_id"})
-        behavior = behavior.rename(columns={"CustomerID": "customer_id"})
-
-        all_rfm.append(rfm)
-        all_behavior.append(behavior)
-
-        print(f"      {cutoff.date()}: {len(rfm)} customers")
+    for r in results:
+        all_rfm.append(r["rfm"])
+        all_behavior.append(r["behavior"])
+        print(f"      {r['cutoff'].date()}: {len(r['rfm'])} customers")
 
     # Concatenate all snapshots into single parquets
     rfm_combined = pd.concat(all_rfm, ignore_index=True)
@@ -72,8 +102,9 @@ def main():
     behavior_combined.to_parquet(BEHAVIOR_FEATURES_PATH, index=False)
 
     print(f"      Parquets saved to {FEATURE_DATA_DIR}/")
-    print("      Done!\n")
+
+    ray.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    run_data_prep_pipeline()

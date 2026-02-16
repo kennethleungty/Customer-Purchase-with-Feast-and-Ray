@@ -9,7 +9,7 @@ with [Feast](https://feast.dev/) as the feature store.
 - **Problem**: Predict whether a customer will churn (no purchases in the next 30 days)
 - **Approach**: Rolling 90-day feature windows with 30-day churn labels, generating
   multiple snapshots per customer across ~9 cutoff dates spaced 30 days apart
-- **Features**: RFM + Behavioral signals, served via Feast offline store
+- **Features**: RFM + Behavioral signals, engineered in parallel via Ray, served via Feast offline store
 - **Model**: XGBoost binary classifier
 - **Feature Store**: Feast with PostgreSQL registry + parquet-backed offline store (2 feature views)
 - **Train/test split**: Temporal — train on earlier cutoffs, test on the latest cutoff
@@ -121,6 +121,13 @@ gantt
 The same customer appears at multiple cutoffs with different feature values
 and potentially different labels, yielding ~17,000 training rows (vs. ~3,700
 with a single cutoff).
+
+Feature engineering at each cutoff is independent, so the pipeline uses
+**Ray** to fan out all cutoffs as parallel tasks across available CPUs.
+The raw DataFrame is placed into Ray's shared object store once
+(`ray.put()`), avoiding redundant copies to each worker. This pattern
+scales naturally — as the dataset grows or cutoff dates increase, Ray
+distributes the work across more cores (or a cluster) with no code changes.
 
 **Training vs. prediction**: The entity key is `(customer_id, event_timestamp)`.
 During **training**, the entity DataFrame spans all cutoff dates — Feast's
