@@ -1,4 +1,4 @@
-# Retail Customer Churn Prediction with Feast
+# Retail Customer Churn Prediction with Feast and Ray
 
 End-to-end MLOps pipeline for predicting **30-day customer churn** using the
 [UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail),
@@ -19,12 +19,11 @@ with [Feast](https://feast.dev/) as the feature store.
 **[Feast](https://feast.dev/)** — Feature store that keeps features
 organized and reusable. Features are computed once, stored as parquet,
 and retrieved via a Python API with built-in point-in-time correctness
-(no data leakage). Swapping local storage for BigQuery or S3 is a
-config change — model code stays the same.
+(no data leakage).
 
 **[Ray](https://www.ray.io/)** — Distributed compute framework for
 parallelizing Python. Feature engineering for each cutoff date runs as
-an independent Ray task, so all 9 cutoffs execute simultaneously instead
+an independent Ray task, so all cutoffs execute simultaneously instead
 of sequentially. Scales from laptop to cluster with no code changes.
 
 ## Data
@@ -210,42 +209,30 @@ concurrently — essential for team collaboration in production.
 cloud object storage (S3/GCS). In production, these files would sit in a
 cloud bucket or be replaced by a data warehouse. The `FileOfflineStore`
 reads them directly for `get_historical_features()` calls during training
-and batch prediction.
+and batch prediction. For now, they are stored locally.
 
-**Why this hybrid approach?** In real-world deployments, the registry and
-the feature data almost always live in separate systems. The registry is
-a lightweight metadata catalog (small, write-heavy during development),
+The registry is a lightweight metadata catalog (small, write-heavy during development),
 while the offline store holds large volumes of feature data (read-heavy
 during training). Separating them allows each to scale independently.
 
 ### Production next steps
-
-This local Docker setup is designed to be swapped for cloud infrastructure
-with minimal code changes — only `feature_store.yaml` and the data source
-definitions in `definitions.py` need to be updated:
-
 - **Registry**: Replace the local PostgreSQL connection string with a
   managed database (e.g., Cloud SQL, Amazon RDS) or use an S3/GCS path
   for a file-based registry in the cloud
 - **Offline store**: Swap `type: file` for `type: bigquery`, `type: snowflake`,
   or `type: redshift` depending on your data warehouse. Replace `FileSource`
   with `BigQuerySource` / `SnowflakeSource` in `definitions.py`
-- **Online store** (if real-time serving is needed): Add Redis or DynamoDB
-  via `online_store` config. Populate with `feast materialize`
 - **CI/CD**: Run `feast apply` in a CI pipeline so that feature definitions
   are version-controlled and reviewed before being registered
 
-The application code (`train.py`, `predict.py`) remains unchanged across
-all of these — Feast abstracts the infrastructure behind a consistent
-Python API.
 
 ## Model Serialization
 
-The trained XGBoost model is saved as `models/xgb_churn_model.json` using
-XGBoost's native JSON format. JSON is preferred over pickle because it is
-**human-readable** (you can inspect the tree structure directly),
-**version-safe** (no Python-version or XGBoost-version deserialization
-issues), and **secure** (pickle can execute arbitrary code on load).
+- The trained XGBoost model is saved as `models/xgb_churn_model.json` using XGBoost's native JSON format.
+- JSON is preferred over pickle because it is:
+  - **human-readable** (you can inspect the tree structure directly)
+  - **version-safe** (no Python-version or XGBoost-version deserialization issues)
+  - **secure** (pickle can execute arbitrary code on load)
 
 ## Pipeline Flow
 
