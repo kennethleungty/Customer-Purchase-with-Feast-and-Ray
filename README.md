@@ -14,7 +14,21 @@ with [Feast](https://feast.dev/) as the feature store.
 - **Feature Store**: Feast with PostgreSQL registry + parquet-backed offline store (2 feature views)
 - **Train/test split**: Temporal — train on earlier cutoffs, test on the latest cutoff
 
+## Why Feast and Ray
+
+**[Feast](https://feast.dev/)** — Feature store that keeps features
+organized and reusable. Features are computed once, stored as parquet,
+and retrieved via a Python API with built-in point-in-time correctness
+(no data leakage). Swapping local storage for BigQuery or S3 is a
+config change — model code stays the same.
+
+**[Ray](https://www.ray.io/)** — Distributed compute framework for
+parallelizing Python. Feature engineering for each cutoff date runs as
+an independent Ray task, so all 9 cutoffs execute simultaneously instead
+of sequentially. Scales from laptop to cluster with no code changes.
+
 ## Data
+
 The UCI Online Retail dataset is available [here](https://archive.ics.uci.edu/dataset/352/online+retail).
 
 ## Project Structure
@@ -121,13 +135,6 @@ gantt
 The same customer appears at multiple cutoffs with different feature values
 and potentially different labels, yielding ~17,000 training rows (vs. ~3,700
 with a single cutoff).
-
-Feature engineering at each cutoff is independent, so the pipeline uses
-**Ray** to fan out all cutoffs as parallel tasks across available CPUs.
-The raw DataFrame is placed into Ray's shared object store once
-(`ray.put()`), avoiding redundant copies to each worker. This pattern
-scales naturally — as the dataset grows or cutoff dates increase, Ray
-distributes the work across more cores (or a cluster) with no code changes.
 
 **Training vs. prediction**: The entity key is `(customer_id, event_timestamp)`.
 During **training**, the entity DataFrame spans all cutoff dates — Feast's
