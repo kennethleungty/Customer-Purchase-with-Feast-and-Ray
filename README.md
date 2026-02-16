@@ -1,8 +1,8 @@
-# Customer Churn Prediction with Feast and Ray
+# Customer Churn Prediction (MLOps) with Feast and Ray
 
 End-to-end MLOps pipeline for predicting **30-day customer churn** using the
 [UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail),
-with [Feast](https://feast.dev/) as the feature store.
+with [Feast](https://feast.dev/) as the feature store and [Ray](https://www.ray.io/) for parallel feature engineering.
 
 ## Overview
 
