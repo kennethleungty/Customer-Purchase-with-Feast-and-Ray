@@ -3,11 +3,11 @@
 # Registry: PostgreSQL (via Docker) — shared, production-style metadata store.
 # Offline store: file-based (parquet) — simulates S3/GCS object storage.
 
-project: retail_churn
+project: retail_purchase
 provider: local
 registry:
     registry_type: sql
-    path: postgresql+psycopg2://feast:feast@localhost:5433/feast_registry
+    path: postgresql+psycopg2://feast:feast@localhost:5433/feast_registry  # pragma: allowlist secret
     cache_ttl_seconds: 60
 offline_store:
     type: file

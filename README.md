@@ -1,13 +1,13 @@
-# Customer Churn Prediction (MLOps) with Feast and Ray
+# Customer Purchase Propensity (MLOps) with Feast and Ray
 
-End-to-end MLOps pipeline for predicting **30-day customer churn** using the
+End-to-end MLOps pipeline for predicting **30-day customer purchase propensity** using the
 [UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail),
 with [Feast](https://feast.dev/) as the feature store and [Ray](https://www.ray.io/) for parallel feature engineering.
 
 ## Overview
 
-- **Problem**: Predict whether a customer will churn (no purchases in the next 30 days)
-- **Approach**: Rolling 90-day feature windows with 30-day churn labels, generating
+- **Problem**: Predict whether a customer will make at least one purchase in the next 30 days
+- **Approach**: Rolling 90-day feature windows with 30-day purchase labels, generating
   multiple snapshots per customer across ~9 cutoff dates spaced 30 days apart
 - **Features**: RFM + Behavioral signals, engineered in parallel via Ray, served via Feast offline store
 - **Model**: XGBoost binary classifier
@@ -46,7 +46,7 @@ The UCI Online Retail dataset is available [here](https://archive.ics.uci.edu/da
 │   ├── data_prep/                      # Data preparation
 │   │   ├── ingestion.py                # Raw data loading and cleaning
 │   │   ├── cutoffs.py                  # Rolling cutoff date generation
-│   │   └── labels.py                   # Churn label computation
+│   │   └── labels.py                   # Purchase label computation
 │   ├── feature_engineering/            # Feature engineering
 │   │   ├── rfm_features.py             # RFM features (recency, frequency, monetary, tenure)
 │   │   └── behavior_features.py        # Behavioral features (order value, basket size, etc.)
@@ -100,13 +100,13 @@ make clean-db   # Stop PostgreSQL container and remove volume
 ## Rolling Window Design
 
 Features are computed from a **90-day window** before each cutoff date,
-and churn labels use the **30-day window** after it. Cutoff dates are
+and purchase labels use the **30-day window** after it. Cutoff dates are
 spaced **30 days apart**, producing ~9 snapshots across the dataset.
 
 ```
 For each cutoff C:
   Features: transactions in [C - 90d, C)
-  Label:    churn = 1 if zero purchases in [C, C + 30d)
+  Label:    purchased = 1 if at least one purchase in [C, C + 30d)
 ```
 
 ```mermaid
@@ -117,22 +117,22 @@ gantt
 
     section Cutoff_1
     Features_90d      :f1, 2010-12-01, 90d
-    Churn_30d         :c1, after f1, 30d
+    Purchase_30d      :c1, after f1, 30d
 
     section Cutoff_2
     Features_90d      :f2, 2010-12-31, 90d
-    Churn_30d         :c2, after f2, 30d
+    Purchase_30d      :c2, after f2, 30d
 
     section Cutoff_3
     Features_90d      :f3, 2011-01-30, 90d
-    Churn_30d         :c3, after f3, 30d
+    Purchase_30d      :c3, after f3, 30d
 
     section ...more
     Earlier_cutoffs_TRAIN :milestone, 2011-08-28, 0d
 
     section Last_Cutoff
-    Features_90d      :f9, 2011-07-29, 90d
-    Churn_30d_TEST    :c9, after f9, 30d
+    Features_90d        :f9, 2011-07-29, 90d
+    Purchase_30d_TEST   :c9, after f9, 30d
 ```
 
 The same customer appears at multiple cutoffs with different feature values
@@ -216,7 +216,7 @@ during training). Separating them allows each to scale independently.
 
 ## Model Serialization
 
-- The trained XGBoost model is saved as `models/xgb_churn_model.json` using XGBoost's native JSON format.
+- The trained XGBoost model is saved as `models/xgb_purchase_model.json` using XGBoost's native JSON format.
 - JSON is preferred over pickle because it is:
   - **human-readable** (you can inspect the tree structure directly)
   - **version-safe** (no Python-version or XGBoost-version deserialization issues)
@@ -227,7 +227,7 @@ during training). Separating them allows each to scale independently.
 ```
 Online Retail.xlsx
   → data_prep/      → rolling cutoffs → 2 multi-snapshot parquets
-  → feast apply     → registers feature views + entity schemas in Feast registry  
+  → feast apply     → registers feature views + entity schemas in Feast registry
   → train.py        → Feast point-in-time join → temporal split → XGBoost → model (.json)
   → predict.py      → Feast retrieval (latest cutoff) → batch predictions
 ```

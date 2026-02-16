@@ -59,11 +59,12 @@ behavior_source = FileSource(
 # Feature View 1 — RFM (Recency, Frequency, Monetary, Tenure)
 # ──────────────────────────────────────────────────────────────────────────────
 # These are the classic customer-value signals used in almost every
-# churn / CLV model.  Each field's dtype must match the parquet column type.
+# purchase propensity / CLV model.  Each field's dtype must match the
+# parquet column type.
 customer_rfm_fv = FeatureView(
     name="customer_rfm_features",
     entities=[customer],
-    # ttl=0 means "features never expire" — appropriate for a static snapshot
+    # ttl=0 means "features never expire": appropriate for a static snapshot
     ttl=timedelta(days=0),
     schema=[
         Field(name="recency_days", dtype=Int64),

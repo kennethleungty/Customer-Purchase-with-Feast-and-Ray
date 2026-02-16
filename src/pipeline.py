@@ -9,7 +9,7 @@ import ray
 
 from src.config import (
     BEHAVIOR_FEATURES_PATH,
-    CHURN_WINDOW_DAYS,
+    PURCHASE_WINDOW_DAYS,
     FEATURE_DATA_DIR,
     FEATURE_WINDOW_DAYS,
     RAW_DATA_PATH,
@@ -47,7 +47,9 @@ def run_data_prep_pipeline():
 
     # Initialize Ray (uses all available CPUs by default)
     ray.init(ignore_reinit_error=True, log_to_driver=False)
-    print(f"      Ray initialized — {ray.cluster_resources().get('CPU', 0):.0f} CPUs available\n")
+    print(
+        f"      Ray initialized — {ray.cluster_resources().get('CPU', 0):.0f} CPUs available\n"
+    )
 
     # 1. Ingest and clean
     print("[1/3] Loading raw data...")
@@ -56,7 +58,7 @@ def run_data_prep_pipeline():
 
     # 2. Generate rolling cutoff dates
     cutoffs = generate_cutoff_dates(
-        df, FEATURE_WINDOW_DAYS, CHURN_WINDOW_DAYS, ROLLING_STEP_DAYS
+        df, FEATURE_WINDOW_DAYS, PURCHASE_WINDOW_DAYS, ROLLING_STEP_DAYS
     )
     print(f"[2/3] Generated {len(cutoffs)} rolling cutoff dates:")
     for c in cutoffs:
@@ -65,7 +67,9 @@ def run_data_prep_pipeline():
     # 3. Fan out feature engineering across Ray workers.
     #    ray.put() places the DataFrame in shared object store once,
     #    avoiding redundant copies to each worker.
-    print(f"\n[3/3] Engineering features at each cutoff (window={FEATURE_WINDOW_DAYS}d)...")
+    print(
+        f"\n[3/3] Engineering features at each cutoff (window={FEATURE_WINDOW_DAYS}d)..."
+    )
     df_ref = ray.put(df)
 
     # Launch all cutoffs in parallel as Ray tasks
