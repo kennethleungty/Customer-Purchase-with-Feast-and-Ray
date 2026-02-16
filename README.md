@@ -1,10 +1,25 @@
-# Customer Purchase Propensity (MLOps) with Feast and Ray
+# Customer Purchase Modeling (MLOps) with Feast and Ray
 
 End-to-end MLOps pipeline for predicting **30-day customer purchase propensity** using the
 [UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail),
 with [Feast](https://feast.dev/) as the feature store and [Ray](https://www.ray.io/) for parallel feature engineering.
 
-## Overview
+## Motivation and Context
+In my recent work building a customer purchase propensity model for a major client, I came across 2 key structural challenges related to feature engineering while working within a constrained dev environment:
+  1. Inadequate feature management
+    - Feature lineage, data sources, dependencies, and versions were not clearly tracked systematically, making feature selection and auditing of ML runs difficult to manage.
+      - Exacerbated by the heterogeneous data sources from which features are derived, and complex data transformation logic
+    - Inconsistent entity definition (e.g., customer vs account vs portfolio) coupled with poor standardizations of event timestamps, snapshot dates, and aggregation windows
+    - Features were saved in flat files, which is workable for initial POCs, but not stable or scalable for production use.
+    - Lack of guardrails to prevent training-serving skew (i.e., ensure same features (and definitions) used for training and inference)
+
+  2. Feature engineering pipeline latency
+    - Due to the long historical coverage of the time series dataset, a large number of rolling windows had to be computed. These were executed sequentially, and the many features derived from each window compounded processing time, leading to high end-to-end pipeline latency.
+
+The above challenges can be mitigated by implementing a feature store like Feast and a distributed compute framework like Ray.
+
+
+## Project Overview
 
 - **Problem**: Predict whether a customer will make at least one purchase in the next 30 days
 - **Approach**: Rolling 90-day feature windows with 30-day purchase labels, generating
@@ -12,19 +27,19 @@ with [Feast](https://feast.dev/) as the feature store and [Ray](https://www.ray.
 - **Features**: RFM + Behavioral signals, engineered in parallel via Ray, served via Feast offline store
 - **Model**: XGBoost binary classifier
 - **Feature Store**: Feast with PostgreSQL registry + parquet-backed offline store (2 feature views)
-- **Train/test split**: Temporal — train on earlier cutoffs, test on the latest cutoff
+- **Train/test split**: Temporal: train on earlier cutoffs, test on the latest cutoff
 
 ## Why Feast and Ray
 
-**[Feast](https://feast.dev/)** — Feature store that keeps features
-organized and reusable. Features are computed once, stored as parquet,
-and retrieved via a Python API with built-in point-in-time correctness
-(no data leakage).
+**[Feast](https://feast.dev/)**
+- Feature store that keeps features organized and reusable.
+- Features are computed once, stored as parquet, and retrieved via Python API with built-in point-in-time correctness (no data leakage).
 
-**[Ray](https://www.ray.io/)** — Distributed compute framework for
-parallelizing Python. Feature engineering for each cutoff date runs as
-an independent Ray task, so all cutoffs execute simultaneously instead
-of sequentially. Scales from laptop to cluster with no code changes.
+**[Ray](https://www.ray.io/)**
+- Distributed compute framework for parallelizing feature engineering.
+- Feature engineering for each cutoff date runs as an independent Ray task, so all cutoffs execute simultaneously instead
+of sequentially.
+- Scales from laptop to cluster with no code changes.
 
 ## Data
 
