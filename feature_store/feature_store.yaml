@@ -1,7 +1,9 @@
 # Feast feature store configuration
 # ---
 # Registry: PostgreSQL (via Docker) — shared, production-style metadata store.
-# Offline store: file-based (parquet) — simulates S3/GCS object storage.
+# Offline store: Ray-backed — uses Ray for distributed point-in-time joins
+#   during get_historical_features() calls. Falls back gracefully on small
+#   datasets; shines when entity DataFrames have millions of rows.
 
 project: retail_purchase
 provider: local
@@ -10,5 +12,6 @@ registry:
     path: postgresql+psycopg2://feast:feast@localhost:5433/feast_registry  # pragma: allowlist secret
     cache_ttl_seconds: 60
 offline_store:
-    type: file
+    type: ray
+    storage_path: data/ray_storage
 online_store: null

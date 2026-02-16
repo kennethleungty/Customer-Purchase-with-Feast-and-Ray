@@ -26,7 +26,7 @@ The above challenges can be mitigated by implementing a feature store like Feast
   multiple snapshots per customer across ~9 cutoff dates spaced 30 days apart
 - **Features**: RFM + Behavioral signals, engineered in parallel via Ray, served via Feast offline store
 - **Model**: XGBoost binary classifier
-- **Feature Store**: Feast with PostgreSQL registry + parquet-backed offline store (2 feature views)
+- **Feature Store**: Feast with PostgreSQL registry + Ray-backed offline store (2 feature views)
 - **Train/test split**: Temporal: train on earlier cutoffs, test on the latest cutoff
 
 ## Why Feast and Ray
@@ -36,10 +36,10 @@ The above challenges can be mitigated by implementing a feature store like Feast
 - Features are computed once, stored as parquet, and retrieved via Python API with built-in point-in-time correctness (no data leakage).
 
 **[Ray](https://www.ray.io/)**
-- Distributed compute framework for parallelizing feature engineering.
-- Feature engineering for each cutoff date runs as an independent Ray task, so all cutoffs execute simultaneously instead
-of sequentially.
-- Scales from laptop to cluster with no code changes.
+- Distributed compute framework used in two ways in this project:
+  1. **Feature engineering** (`pipeline.py`): each cutoff date runs as an independent `@ray.remote` task, so all cutoffs execute simultaneously instead of sequentially. Ray is used directly here, independent of Feast.
+  2. **Feature retrieval** (`train.py` / `predict.py`): Feast's `RayOfflineStore` uses Ray under the hood to distribute parquet reads and point-in-time joins when `get_historical_features()` is called. Feast manages Ray internally here; no direct Ray calls in user code.
+- Both uses are decoupled (separate processes, separate Ray sessions) and scale from laptop to cluster with no code changes.
 
 ## Data
 
@@ -155,25 +155,25 @@ and potentially different labels, yielding ~17,000 training rows (vs. ~3,700
 with a single cutoff).
 
 **Training vs. prediction**: The entity key is `(customer_id, event_timestamp)`.
-During **training**, the entity DataFrame spans all cutoff dates — Feast's
+During **training**, the entity DataFrame spans all cutoff dates. Feast's
 point-in-time join pulls the correct 90-day feature snapshot for each.
 During **prediction**, the entity DataFrame contains only the latest cutoff,
 so Feast returns just that single snapshot per customer.
 
 ## Feature Views
 
-**`customer_rfm_features`** — Classic customer-value signals (90-day window):
-- `recency_days` — days since last purchase in the window
-- `frequency` — number of distinct orders in the window
-- `monetary` — total spend in the window
-- `tenure_days` — days since first-ever purchase (all-time)
+**`customer_rfm_features`** - Classic customer-value signals (90-day window):
+- `recency_days` - days since last purchase in the window
+- `frequency` - number of distinct orders in the window
+- `monetary` - total spend in the window
+- `tenure_days` - days since first-ever purchase (all-time)
 
-**`customer_behavior_features`** — Purchasing pattern signals (90-day window):
-- `avg_order_value` — mean spend per order
-- `avg_basket_size` — mean items per order
-- `n_unique_products` — product diversity
-- `return_rate` — share of cancelled orders
-- `avg_days_between_purchases` — purchase cadence
+**`customer_behavior_features`** - Purchasing pattern signals (90-day window):
+- `avg_order_value` - mean spend per order
+- `avg_basket_size` - mean items per order
+- `n_unique_products` - product diversity
+- `return_rate` - share of cancelled orders
+- `avg_days_between_purchases` - purchase cadence
 
 ## Feature Store Infrastructure
 
@@ -195,37 +195,52 @@ flowchart LR
 
     subgraph feast [Feast]
         REG["SQL Registry"]
-        OFF["FileOfflineStore"]
+        OFF["RayOfflineStore"]
     end
 
     REG -->|SQLAlchemy| PG
-    OFF --> PQ1
-    OFF --> PQ2
+    OFF -->|Ray dataset read| PQ1
+    OFF -->|Ray dataset read| PQ2
 ```
 
-**Registry (metadata)** — Stored in PostgreSQL via Docker, replacing the
+**Registry (metadata)**: Stored in PostgreSQL via Docker, replacing the
 default local SQLite file. The registry holds feature view definitions,
 entity schemas, and data source locations. Using PostgreSQL means multiple
 data scientists and services can read from and write to the same registry
-concurrently — essential for team collaboration in production.
+concurrently, which is essential for team collaboration in production.
 
-**Offline store (feature values)** — Parquet files on local disk, simulating
-cloud object storage (S3/GCS). In production, these files would sit in a
-cloud bucket or be replaced by a data warehouse. The `FileOfflineStore`
-reads them directly for `get_historical_features()` calls during training
-and batch prediction. For now, they are stored locally.
+**Offline store (feature values)**: Feature data lives in parquet files
+on local disk (simulating cloud object storage like S3/GCS). The offline
+store **engine** controls how Feast reads these files and performs joins.
 
-The registry is a lightweight metadata catalog (small, write-heavy during development),
-while the offline store holds large volumes of feature data (read-heavy
-during training). Separating them allows each to scale independently.
+By default, Feast uses the `FileOfflineStore`, which reads parquets into
+pandas and joins in a single process. This project upgrades to the
+`RayOfflineStore` (`type: ray`), which uses Ray to distribute reads and
+joins across multiple workers. The underlying parquet files are unchanged;
+only the compute engine is different.
+
+**Why this matters**: when `get_historical_features()` is called, Feast
+performs a point-in-time join for each feature view, matching every
+`(customer_id, event_timestamp)` row in the entity DataFrame to the
+correct feature snapshot where the feature timestamp is <= the entity
+timestamp. With 2 feature views, that's 2 temporal joins. As entity
+DataFrames grow to millions of rows and more feature views are added,
+these joins become the bottleneck. The Ray offline store parallelizes
+this work, keeping retrieval times manageable at scale.
+
+The registry is a lightweight metadata catalog (small, write-heavy during
+development), while the offline store holds large volumes of feature data
+(read-heavy during training). Separating them allows each to scale
+independently.
 
 ### Production next steps
 - **Registry**: Replace the local PostgreSQL connection string with a
   managed database (e.g., Cloud SQL, Amazon RDS) or use an S3/GCS path
   for a file-based registry in the cloud
-- **Offline store**: Swap `type: file` for `type: bigquery`, `type: snowflake`,
-  or `type: redshift` depending on your data warehouse. Replace `FileSource`
-  with `BigQuerySource` / `SnowflakeSource` in `definitions.py`
+- **Offline store**: Point the Ray offline store at a remote Ray cluster
+  (`ray_address` config) or deploy via KubeRay for elastic scaling.
+  Swap `FileSource` for `BigQuerySource` / `SnowflakeSource` depending
+  on your data warehouse
 - **CI/CD**: Run `feast apply` in a CI pipeline so that feature definitions
   are version-controlled and reviewed before being registered
 
