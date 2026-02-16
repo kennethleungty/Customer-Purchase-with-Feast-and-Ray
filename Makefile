@@ -15,7 +15,7 @@ db:
 
 # Step 1: Ingest raw data, engineer features, save parquets
 prep:
-	python -m src.data_prep.pipeline
+	python -m src.pipeline
 
 # Step 2: Register Feast feature definitions in PostgreSQL registry
 apply:

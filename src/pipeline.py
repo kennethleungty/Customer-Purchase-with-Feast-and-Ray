@@ -16,9 +16,8 @@ from src.config import (
     RFM_FEATURES_PATH,
     ROLLING_STEP_DAYS,
 )
-from src.data_prep.behavior_features import build_behavior_features
-from src.data_prep.rfm_features import build_rfm_features
-from src.data_prep.utils import generate_cutoff_dates, ingest_and_clean
+from src.data_prep import generate_cutoff_dates, ingest_and_clean
+from src.feature_engineering import build_behavior_features, build_rfm_features
 
 
 @ray.remote

@@ -22,7 +22,7 @@ from src.config import (
     ALL_FEATURES,
     BEHAVIOR_FEATURES,
     CHURN_WINDOW_DAYS,
-    FEATURE_REPO_DIR,
+    FEATURE_STORE_DIR,
     FEATURE_WINDOW_DAYS,
     MODEL_DIR,
     MODEL_PATH,
@@ -75,7 +75,7 @@ def retrieve_features(entity_df: pd.DataFrame) -> pd.DataFrame:
     is <= the requested timestamp — this is the core mechanism that
     prevents data leakage across time.
     """
-    store = FeatureStore(repo_path=str(FEATURE_REPO_DIR))
+    store = FeatureStore(repo_path=str(FEATURE_STORE_DIR))
 
     # Build feature refs from config lists — add features in config.py
     # and they'll automatically be requested here.

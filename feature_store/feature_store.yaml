@@ -11,3 +11,4 @@ registry:
     cache_ttl_seconds: 60
 offline_store:
     type: file
+online_store: null

@@ -11,11 +11,11 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "data"
-FEATURE_REPO_DIR = ROOT_DIR / "feature_store"
-FEATURE_DATA_DIR = FEATURE_REPO_DIR / "data"
+FEATURE_STORE_DIR = ROOT_DIR / "feature_store"
+FEATURE_DATA_DIR = FEATURE_STORE_DIR / "data"
 MODEL_DIR = ROOT_DIR / "models"
 
-RAW_DATA_PATH = DATA_DIR / "Online Retail.xlsx"
+RAW_DATA_PATH = DATA_DIR / "input" / "Online Retail.xlsx"
 
 # Parquet outputs consumed by Feast as offline data sources
 RFM_FEATURES_PATH = FEATURE_DATA_DIR / "customer_rfm_features.parquet"

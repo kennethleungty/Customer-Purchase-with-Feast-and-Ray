@@ -15,7 +15,7 @@ from xgboost import XGBClassifier
 from src.config import (
     ALL_FEATURES,
     BEHAVIOR_FEATURES,
-    FEATURE_REPO_DIR,
+    FEATURE_STORE_DIR,
     MODEL_DIR,
     MODEL_PATH,
     PREDICTIONS_PATH,
@@ -32,13 +32,12 @@ def main():
     #    We filter to the most recent one for "current" predictions.
     rfm_df = pd.read_parquet(RFM_FEATURES_PATH, columns=["customer_id", "event_timestamp"])
     latest_cutoff = rfm_df["event_timestamp"].max()
-    entity_df = rfm_df[rfm_df["event_timestamp"] == latest_cutoff][["customer_id"]].copy()
-    entity_df["event_timestamp"] = latest_cutoff  # Get latest cutoff for prediction
+    entity_df = rfm_df[rfm_df["event_timestamp"] == latest_cutoff][["customer_id", "event_timestamp"]].copy()
     print(f"[1/4] {len(entity_df)} customers to score (cutoff: {latest_cutoff.date()})")
 
     # 2. Retrieve features from Feast (same retrieval logic as training)
     print("[2/4] Retrieving features from Feast...")
-    store = FeatureStore(repo_path=str(FEATURE_REPO_DIR))
+    store = FeatureStore(repo_path=str(FEATURE_STORE_DIR))
 
     # Build feature refs from config lists — single source of truth
     feature_refs = [

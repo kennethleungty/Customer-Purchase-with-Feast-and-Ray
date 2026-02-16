@@ -1,4 +1,4 @@
-# Retail Customer Churn Prediction with Feast and Ray
+# Customer Churn Prediction with Feast and Ray
 
 End-to-end MLOps pipeline for predicting **30-day customer churn** using the
 [UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail),
@@ -34,18 +34,22 @@ The UCI Online Retail dataset is available [here](https://archive.ics.uci.edu/da
 
 ```
 ├── data/
-│   └── Online Retail.xlsx              # Raw UCI dataset
+│   └── input/
+│       └── Online Retail.xlsx          # Raw UCI dataset
 ├── feature_store/
 │   ├── feature_store.yaml              # Feast configuration
 │   ├── definitions.py                  # Entity + FeatureView definitions
 │   └── data/                           # Generated parquets (Feast data sources)
 ├── src/
 │   ├── config.py                       # Centralized configuration
-│   ├── data_prep/                      # Data preparation package
-│   │   ├── utils.py                    # Ingestion, cutoff generation, churn labels
-│   │   ├── rfm_features.py             # RFM feature engineering
-│   │   ├── behavior_features.py        # Behavioral feature engineering
-│   │   └── pipeline.py                 # Orchestrator (run via Makefile)
+│   ├── pipeline.py                     # Top-level orchestrator (run via Makefile)
+│   ├── data_prep/                      # Data preparation
+│   │   ├── ingestion.py                # Raw data loading and cleaning
+│   │   ├── cutoffs.py                  # Rolling cutoff date generation
+│   │   └── labels.py                   # Churn label computation
+│   ├── feature_engineering/            # Feature engineering
+│   │   ├── rfm_features.py             # RFM features (recency, frequency, monetary, tenure)
+│   │   └── behavior_features.py        # Behavioral features (order value, basket size, etc.)
 │   ├── train.py                        # Feast retrieval → temporal split → XGBoost training
 │   └── predict.py                      # Batch prediction via Feast (latest cutoff)
 ├── models/                             # Saved model + predictions
@@ -67,7 +71,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Place `Online Retail.xlsx` in the `data/` directory.
+Place `Online Retail.xlsx` in the `data/input/` directory.
 
 ## Usage
 
@@ -156,27 +160,12 @@ so Feast returns just that single snapshot per customer.
 - `return_rate` — share of cancelled orders
 - `avg_days_between_purchases` — purchase cadence
 
-## Feature Store Concepts
-
-A Feast feature store has two core components:
-
-**Registry** — A metadata catalog that stores *what* features exist: entity
-definitions, feature view schemas, data source locations, and versioning.
-Think of it as the "table of contents" for the feature store. Without it,
-Feast wouldn't know which features are available or where to find their
-data. It is lightweight and write-heavy during development (every
-`feast apply` updates it).
-
-**Data sources** — The actual feature values. Each parquet file is a
-*data source* that backs a Feast `FeatureView`. When
-`get_historical_features()` is called, Feast reads from these data sources
-to construct the feature matrix. They are large and read-heavy during
-training and batch prediction.
-
 ## Feature Store Infrastructure
 
-This project moves beyond a purely local setup to simulate production-grade
-feature store infrastructure using Docker.
+A Feast feature store has two core components: a **registry** (metadata
+catalog of what features exist) and **data sources** (the actual feature
+values). This project moves beyond a purely local setup to simulate
+production-grade infrastructure using Docker.
 
 ```mermaid
 flowchart LR
@@ -184,7 +173,7 @@ flowchart LR
         PG["PostgreSQL 16\nFeast Registry"]
     end
 
-    subgraph disk [Local Disk / Mounted Volume]
+    subgraph disk [Local Disk]
         PQ1["customer_rfm_features.parquet"]
         PQ2["customer_behavior_features.parquet"]
     end
@@ -225,7 +214,6 @@ during training). Separating them allows each to scale independently.
 - **CI/CD**: Run `feast apply` in a CI pipeline so that feature definitions
   are version-controlled and reviewed before being registered
 
-
 ## Model Serialization
 
 - The trained XGBoost model is saved as `models/xgb_churn_model.json` using XGBoost's native JSON format.
@@ -239,7 +227,7 @@ during training). Separating them allows each to scale independently.
 ```
 Online Retail.xlsx
   → data_prep/      → rolling cutoffs → 2 multi-snapshot parquets
-  → feast apply     → Feast registry
+  → feast apply     → registers feature views + entity schemas in Feast registry  
   → train.py        → Feast point-in-time join → temporal split → XGBoost → model (.json)
   → predict.py      → Feast retrieval (latest cutoff) → batch predictions
 ```

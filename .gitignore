@@ -1,5 +1,5 @@
-# Data files
-data/
+# Data files (download from UCI — see README)
+data/input/
 
 # Generated artifacts
 models/
