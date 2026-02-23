@@ -41,9 +41,6 @@ The above challenges can be mitigated by implementing a feature store like Feast
   2. **Feature retrieval** (`train.py` / `predict.py`): Feast's `RayOfflineStore` uses Ray under the hood to distribute parquet reads and point-in-time joins when `get_historical_features()` is called. Feast manages Ray internally here; no direct Ray calls in user code.
 - Both uses are decoupled (separate processes, separate Ray sessions) and scale from laptop to cluster with no code changes.
 
-## Data
-
-The UCI Online Retail dataset is available [here](https://archive.ics.uci.edu/dataset/352/online+retail).
 
 ## Project Structure
 
@@ -73,43 +70,44 @@ The UCI Online Retail dataset is available [here](https://archive.ics.uci.edu/da
 └── requirements.txt
 ```
 
-## Prerequisites
+## Quick Start
 
+### Prerequisites
 - Python 3.10+
-- Docker (for the PostgreSQL registry)
+- Docker (running)
 
-## Setup
+### 1. Get the Data
+Download the [UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail) and extract `Online Retail.xlsx` to:
+```
+data/input/Online Retail.xlsx
+```
 
+### 2. Install Dependencies
 ```bash
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Place `Online Retail.xlsx` in the `data/input/` directory.
-
-## Usage
-
-Run the full pipeline:
-
+### 3. Run the Pipeline
 ```bash
-make all        # db → prep → apply → train
+make all    # Runs: db → prep → apply → train
 ```
 
-Or run steps individually:
+This will:
+1. Start PostgreSQL (Feast registry) via Docker
+2. Engineer features across rolling cutoffs using Ray
+3. Register feature definitions in Feast
+4. Train XGBoost model using features from Feast
 
+### Individual Steps
 ```bash
-make db         # Start PostgreSQL via Docker (Feast registry backend)
-make prep       # Ingest Excel, engineer rolling features, save parquets
-make apply      # Register Feast feature definitions in PostgreSQL
-make train      # Train XGBoost using Feast offline store (temporal split)
-make predict    # Batch-score customers at the latest cutoff
-```
-
-To tear down the database:
-
-```bash
-make clean-db   # Stop PostgreSQL container and remove volume
+make db         # Start PostgreSQL container
+make prep       # Ray-based feature engineering → parquet files
+make apply      # Register feature views in Feast registry
+make train      # Retrieve features from Feast → train model
+make predict    # Batch predictions on latest cutoff
+make clean-db   # Stop PostgreSQL and remove data
 ```
 
 ## Rolling Window Design
@@ -175,89 +173,32 @@ so Feast returns just that single snapshot per customer.
 - `return_rate` - share of cancelled orders
 - `avg_days_between_purchases` - purchase cadence
 
-## Feature Store Infrastructure
+## Feature Store Architecture
 
-A Feast feature store has two core components: a **registry** (metadata
-catalog of what features exist) and **data sources** (the actual feature
-values). This project moves beyond a purely local setup to simulate
-production-grade infrastructure using Docker.
+**Registry (PostgreSQL)**: Stores feature metadata (schemas, definitions, data sources). Uses PostgreSQL instead of local SQLite to simulate production-grade multi-user access.
 
-```mermaid
-flowchart LR
-    subgraph docker [Docker]
-        PG["PostgreSQL 16\nFeast Registry"]
-    end
+**Offline Store (Ray)**: Feature data lives in parquet files. The `RayOfflineStore` distributes parquet reads and point-in-time joins across workers. When `get_historical_features()` is called, Feast performs temporal joins for each feature view, matching `(customer_id, event_timestamp)` to the correct feature snapshot. Ray parallelizes this work at scale.
 
-    subgraph disk [Local Disk]
-        PQ1["customer_rfm_features.parquet"]
-        PQ2["customer_behavior_features.parquet"]
-    end
+**Production path**: Swap local PostgreSQL for Cloud SQL/RDS, point Ray at a remote cluster via `ray_address`, replace `FileSource` with `BigQuerySource`/`SnowflakeSource`, and run `feast apply` in CI/CD.
 
-    subgraph feast [Feast]
-        REG["SQL Registry"]
-        OFF["RayOfflineStore"]
-    end
+## Model Output
 
-    REG -->|SQLAlchemy| PG
-    OFF -->|Ray dataset read| PQ1
-    OFF -->|Ray dataset read| PQ2
-```
-
-**Registry (metadata)**: Stored in PostgreSQL via Docker, replacing the
-default local SQLite file. The registry holds feature view definitions,
-entity schemas, and data source locations. Using PostgreSQL means multiple
-data scientists and services can read from and write to the same registry
-concurrently, which is essential for team collaboration in production.
-
-**Offline store (feature values)**: Feature data lives in parquet files
-on local disk (simulating cloud object storage like S3/GCS). The offline
-store **engine** controls how Feast reads these files and performs joins.
-
-By default, Feast uses the `FileOfflineStore`, which reads parquets into
-pandas and joins in a single process. This project upgrades to the
-`RayOfflineStore` (`type: ray`), which uses Ray to distribute reads and
-joins across multiple workers. The underlying parquet files are unchanged;
-only the compute engine is different.
-
-**Why this matters**: when `get_historical_features()` is called, Feast
-performs a point-in-time join (i.e., data from specific timepoint) for each feature view, matching every
-`(customer_id, event_timestamp)` row in the entity DataFrame to the
-correct feature snapshot where the feature timestamp is <= the entity
-timestamp. With 2 feature views, that's 2 temporal joins. As entity
-DataFrames grow to millions of rows and more feature views are added,
-these joins become the bottleneck. The Ray offline store parallelizes
-this work, keeping retrieval times manageable at scale.
-
-The registry is a lightweight metadata catalog (small, write-heavy during
-development), while the offline store holds large volumes of feature data
-(read-heavy during training). Separating them allows each to scale
-independently.
-
-### Production next steps
-- **Registry**: Replace the local PostgreSQL connection string with a
-  managed database (e.g., Cloud SQL, Amazon RDS) or use an S3/GCS path
-  for a file-based registry in the cloud
-- **Offline store**: Point the Ray offline store at a remote Ray cluster
-  (`ray_address` config) or deploy via KubeRay for elastic scaling.
-  Swap `FileSource` for `BigQuerySource` / `SnowflakeSource` depending
-  on your data warehouse
-- **CI/CD**: Run `feast apply` in a CI pipeline so that feature definitions
-  are version-controlled and reviewed before being registered
-
-## Model Serialization
-
-- The trained XGBoost model is saved as `models/xgb_purchase_model.json` using XGBoost's native JSON format.
-- JSON is preferred over pickle because it is:
-  - **human-readable** (you can inspect the tree structure directly)
-  - **version-safe** (no Python-version or XGBoost-version deserialization issues)
-  - **secure** (pickle can execute arbitrary code on load)
+Models are saved in XGBoost's native JSON format (`models/xgb_purchase_model.json`) for human-readability, version safety, and security (avoiding pickle vulnerabilities).
 
 ## Pipeline Flow
 
 ```
-Online Retail.xlsx
-  → data_prep/      → rolling cutoffs → 2 multi-snapshot parquets
-  → feast apply     → registers feature views + entity schemas in Feast registry
-  → train.py        → Feast point-in-time join → temporal split → XGBoost → model (.json)
-  → predict.py      → Feast retrieval (latest cutoff) → batch predictions
+Raw Data (Excel)
+  ↓
+Ray Parallel Feature Engineering (pipeline.py)
+  → Computes features across rolling cutoffs → parquet files
+  ↓
+Feast Registry (feast apply)
+  → Registers feature views in PostgreSQL
+  ↓
+Training (train.py)
+  → Feast point-in-time join → temporal split → XGBoost → model.json
+  ↓
+Prediction (predict.py)
+  → Feast retrieval (latest cutoff) → batch predictions → predictions.parquet
 ```
