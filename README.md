@@ -1,4 +1,6 @@
-# Production Feature Engineering Pipelines with Feast and Ray
+# Scaling Feature Engineering Pipelines with Feast and Ray
+
+Link to article: *Coming Soon*
 
 ML pipeline for predicting **30-day customer purchase propensity** using the
 [UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail),
