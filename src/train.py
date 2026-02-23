@@ -57,6 +57,7 @@ def build_entity_df() -> pd.DataFrame:
 
     all_labels = []
     for cutoff in cutoffs:
+        # Include target labels for each cutoff
         labels = build_purchase_labels(
             df, cutoff, PURCHASE_WINDOW_DAYS, FEATURE_WINDOW_DAYS
         )

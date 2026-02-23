@@ -24,12 +24,16 @@ from src.config import (
 )
 
 
-def main():
-    print("=== Batch Prediction Pipeline ===\n")
+def build_entity_df() -> pd.DataFrame:
+    """
+    Build the entity DataFrame for the LATEST cutoff date only.
 
-    # 1. Entity DataFrame — score customers at the latest cutoff only.
-    #    The parquet contains rows at many cutoff dates (rolling window).
-    #    We filter to the most recent one for "current" predictions.
+    Filters the feature parquet to the most recent cutoff to score
+    current customers. Unlike training, we don't include labels since
+    we're predicting the future.
+
+    Each row = (customer_id, event_timestamp).
+    """
     rfm_df = pd.read_parquet(
         RFM_FEATURES_PATH, columns=["customer_id", "event_timestamp"]
     )
@@ -37,10 +41,17 @@ def main():
     entity_df = rfm_df[rfm_df["event_timestamp"] == latest_cutoff][
         ["customer_id", "event_timestamp"]
     ].copy()
-    print(f"[1/4] {len(entity_df)} customers to score (cutoff: {latest_cutoff.date()})")
 
-    # 2. Retrieve features from Feast (same retrieval logic as training)
-    print("[2/4] Retrieving features from Feast...")
+    return entity_df
+
+
+def retrieve_features(entity_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Use Feast to join features from BOTH feature views onto the entity df.
+
+    Same retrieval logic as training, ensuring consistency between
+    training and serving (no training-serving skew).
+    """
     store = FeatureStore(repo_path=str(FEATURE_STORE_DIR))
 
     # Build feature refs from config lists — single source of truth
@@ -52,6 +63,22 @@ def main():
         entity_df=entity_df,
         features=feature_refs,
     ).to_df()
+
+    return features_df
+
+
+def main():
+    print("=== Batch Prediction Pipeline ===\n")
+
+    # 1. Entity DataFrame for latest cutoff
+    print("[1/4] Building entity DataFrame (latest cutoff only)...")
+    entity_df = build_entity_df()
+    latest_cutoff = entity_df["event_timestamp"].iloc[0]
+    print(f"      {len(entity_df)} customers to score (cutoff: {latest_cutoff.date()})")
+
+    # 2. Retrieve features from Feast
+    print("[2/4] Retrieving features from Feast...")
+    features_df = retrieve_features(entity_df)
 
     # 3. Load trained model
     print("[3/4] Loading model...")

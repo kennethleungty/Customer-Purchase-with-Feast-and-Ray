@@ -43,31 +43,19 @@ def compute_features_for_cutoff(
 
 
 def run_data_prep_pipeline():
-    # Initialize Ray (uses all available CPUs by default)
+    # Initialize Ray
     ray.init(ignore_reinit_error=True, log_to_driver=False)
-    print(
-        f" Ray initialized — {ray.cluster_resources().get('CPU', 0):.0f} CPUs available\n"
-    )
 
-    # 1. Ingest and clean
-    print("[1/3] Loading raw data...")
+    # 1. Ingest and clean raw data
     df = ingest_and_clean(RAW_DATA_PATH)
-    print(f" {len(df):,} rows | {df['CustomerID'].nunique():,} customers\n")
 
     # 2. Generate rolling cutoff dates
     cutoffs = generate_cutoff_dates(
         df, FEATURE_WINDOW_DAYS, PURCHASE_WINDOW_DAYS, ROLLING_STEP_DAYS
     )
-    print(f"[2/3] Generated {len(cutoffs)} rolling cutoff dates:")
-    for c in cutoffs:
-        print(f"      {c.date()}")
 
-    # 3. Fan out feature engineering across Ray workers.
-    #    ray.put() places the DataFrame in shared object store once,
-    #    avoiding redundant copies to each worker.
-    print(
-        f"\n[3/3] Engineering features at each cutoff (window={FEATURE_WINDOW_DAYS}d)..."
-    )
+    # 3. Distribute feature engineering across Ray workers
+    # ray.put() places DataFrame in shared object store once, avoiding redundant copies
     df_ref = ray.put(df)
 
     # Launch all cutoffs in parallel as Ray tasks
@@ -76,32 +64,19 @@ def run_data_prep_pipeline():
         for cutoff in cutoffs
     ]
 
-    # Collect results as they complete
+    # Collect results from all workers
     results = ray.get(futures)
 
-    # Sort by cutoff date for deterministic output order
-    results.sort(key=lambda r: r["cutoff"])
-
-    all_rfm = []
-    all_behavior = []
-    for r in results:
-        all_rfm.append(r["rfm"])
-        all_behavior.append(r["behavior"])
-        print(f" {r['cutoff'].date()}: {len(r['rfm'])} customers")
-
-    # Concatenate all snapshots into single parquets
+    # Extract and concatenate RFM and behavior features
+    all_rfm = [r["rfm"] for r in results]
+    all_behavior = [r["behavior"] for r in results]
     rfm_combined = pd.concat(all_rfm, ignore_index=True)
     behavior_combined = pd.concat(all_behavior, ignore_index=True)
 
-    total_rows = len(rfm_combined)
-    unique_customers = rfm_combined["customer_id"].nunique()
-    print(f"\n      Total: {total_rows:,} rows ({unique_customers:,} unique customers)")
-
+    # Save to parquet files
     FEATURE_DATA_DIR.mkdir(parents=True, exist_ok=True)
     rfm_combined.to_parquet(RFM_FEATURES_PATH, index=False)
     behavior_combined.to_parquet(BEHAVIOR_FEATURES_PATH, index=False)
-
-    print(f" Parquets saved to {FEATURE_DATA_DIR}/")
 
     ray.shutdown()
 
