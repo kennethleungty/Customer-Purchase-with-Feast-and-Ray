@@ -11,7 +11,7 @@ registry:
     registry_type: sql
     path: postgresql+psycopg2://feast:feast@localhost:5433/feast_registry  # pragma: allowlist secret
     cache_ttl_seconds: 60
-offline_store:
+offline_store:  # Config for experimentation and testing:
     type: ray
     storage_path: data/ray_storage
 online_store: null

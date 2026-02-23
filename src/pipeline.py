@@ -43,18 +43,16 @@ def compute_features_for_cutoff(
 
 
 def run_data_prep_pipeline():
-    print("=== Data Preparation Pipeline ===\n")
-
     # Initialize Ray (uses all available CPUs by default)
     ray.init(ignore_reinit_error=True, log_to_driver=False)
     print(
-        f"      Ray initialized — {ray.cluster_resources().get('CPU', 0):.0f} CPUs available\n"
+        f" Ray initialized — {ray.cluster_resources().get('CPU', 0):.0f} CPUs available\n"
     )
 
     # 1. Ingest and clean
     print("[1/3] Loading raw data...")
     df = ingest_and_clean(RAW_DATA_PATH)
-    print(f"      {len(df):,} rows | {df['CustomerID'].nunique():,} customers\n")
+    print(f" {len(df):,} rows | {df['CustomerID'].nunique():,} customers\n")
 
     # 2. Generate rolling cutoff dates
     cutoffs = generate_cutoff_dates(
@@ -89,7 +87,7 @@ def run_data_prep_pipeline():
     for r in results:
         all_rfm.append(r["rfm"])
         all_behavior.append(r["behavior"])
-        print(f"      {r['cutoff'].date()}: {len(r['rfm'])} customers")
+        print(f" {r['cutoff'].date()}: {len(r['rfm'])} customers")
 
     # Concatenate all snapshots into single parquets
     rfm_combined = pd.concat(all_rfm, ignore_index=True)
@@ -99,12 +97,11 @@ def run_data_prep_pipeline():
     unique_customers = rfm_combined["customer_id"].nunique()
     print(f"\n      Total: {total_rows:,} rows ({unique_customers:,} unique customers)")
 
-    # Save
     FEATURE_DATA_DIR.mkdir(parents=True, exist_ok=True)
     rfm_combined.to_parquet(RFM_FEATURES_PATH, index=False)
     behavior_combined.to_parquet(BEHAVIOR_FEATURES_PATH, index=False)
 
-    print(f"      Parquets saved to {FEATURE_DATA_DIR}/")
+    print(f" Parquets saved to {FEATURE_DATA_DIR}/")
 
     ray.shutdown()
 
