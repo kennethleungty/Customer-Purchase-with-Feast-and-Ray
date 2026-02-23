@@ -4,19 +4,20 @@ ML pipeline for predicting **30-day customer purchase propensity** using the
 [UCI Online Retail dataset](https://archive.ics.uci.edu/dataset/352/online+retail),
 with [Feast](https://feast.dev/) as the feature store and [Ray](https://www.ray.io/) for parallel feature engineering.
 
-## Motivation and Context
-In my recent work building a customer purchase propensity model for a major client, I came across 2 key structural challenges related to feature engineering while working within a constrained dev environment:
-  1. Inadequate feature management
-    - Feature lineage, data sources, dependencies, and versions were not clearly tracked systematically, making feature selection and auditing of ML runs difficult to manage.
-      - Exacerbated by the heterogeneous data sources from which features are derived, and complex data transformation logic
-    - Inconsistent entity definition (e.g., customer vs account vs portfolio) coupled with poor standardizations of event timestamps, snapshot dates, and aggregation windows
-    - Features were saved in flat files, which is workable for initial POCs, but not stable or scalable for production use.
-    - Lack of guardrails to prevent training-serving skew (i.e., ensure same features (and definitions) used for training and inference)
+## Motivation
 
-  2. Feature engineering pipeline latency
-    - Due to the long historical coverage of the time series dataset, a large number of rolling windows had to be computed. These were executed sequentially, and the many features derived from each window compounded processing time, leading to high end-to-end pipeline latency.
+In a recent project building propensity models to predict customer purchases, I encountered feature engineering challenges that are common across many ML systems:
 
-The above challenges can be mitigated by implementing a feature store like Feast and a distributed compute framework like Ray.
+**1. Inadequate Feature Management**
+- Feature definitions, lineage, and versions were not systematically tracked, limiting reusability and reproducibility of model runs
+- Feature logic was manually maintained across separate training and inference scripts, risking inconsistent features between training and serving (training-serving skew)
+- Features stored as flat files (CSV) lacked schema enforcement and support for scalable access
+
+**2. High Feature Engineering Latency**
+- Heavy workloads arise when computing window-based transformations over time-series data
+- Sequential execution of rolling window computations (rather than parallel) significantly increases pipeline latency
+
+These challenges can be addressed with a feature store (Feast) for centralized feature management and a distributed compute framework (Ray) for parallel execution.
 
 
 ## Project Overview
